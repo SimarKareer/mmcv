@@ -202,6 +202,10 @@ class EvalHook(Hook):
         Returns:
             bool: The flag indicating whether to perform evaluation.
         """
+        world_rank = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0)))
+        if world_rank != 0:
+            return False
+
         if self.by_epoch:
             current = runner.epoch
             check_time = self.every_n_epochs

@@ -1,18 +1,21 @@
-# Copyright (c) Open-MMLab. All rights reserved.
+# Copyright (c) OpenMMLab. All rights reserved.
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import functools
 import os
-import subprocess
 import socket
+import subprocess
 from collections import OrderedDict
+from typing import Callable, List, Optional, Tuple
 
 import torch
 import torch.multiprocessing as mp
 from torch import distributed as dist
 from torch._utils import (_flatten_dense_tensors, _take_tensors,
                           _unflatten_dense_tensors)
-from typing import Callable, List, Optional, Tuple
+import ifcfg
 
-from mmcv.utils import TORCH_VERSION
+# from mmcv.utils import IS_MLU_AVAILABLE, IS_NPU_AVAILABLE
+
 
 
 def _find_free_port() -> str:
@@ -32,7 +35,8 @@ def _is_free_port(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return all(s.connect_ex((ip, port)) != 0 for ip in ips)
 
-def init_dist(launcher, backend='nccl', **kwargs):
+
+def init_dist(launcher: str, backend: str = 'nccl', **kwargs) -> None:
     if mp.get_start_method(allow_none=True) is None:
         mp.set_start_method('spawn')
     if launcher == 'pytorch':
@@ -40,25 +44,47 @@ def init_dist(launcher, backend='nccl', **kwargs):
     elif launcher == 'mpi':
         _init_dist_mpi(backend, **kwargs)
     elif launcher == 'slurm':
-        print("using backend: ", backend)
-        _init_dist_slurm(backend, **kwargs)
+        _init_dist_slurm("nccl", **kwargs)
     else:
         raise ValueError(f'Invalid launcher type: {launcher}')
 
 
-def _init_dist_pytorch(backend, **kwargs):
-    # TODO: use local_rank instead of rank % num_gpus
-    rank = int(os.environ['RANK'])
-    num_gpus = torch.cuda.device_count()
-    torch.cuda.set_device(rank % num_gpus)
-    dist.init_process_group(backend=backend, **kwargs)
+# def _init_dist_pytorch(backend: str, **kwargs) -> None:
+#     # TODO: use local_rank instead of rank % num_gpus
+#     rank = int(os.environ['RANK'])
+#     if IS_MLU_AVAILABLE:
+#         import torch_mlu  # noqa: F401
+#         torch.mlu.set_device(rank)
+#         dist.init_process_group(
+#             backend='cncl',
+#             rank=rank,
+#             world_size=int(os.environ['WORLD_SIZE']),
+#             **kwargs)
+#     elif IS_NPU_AVAILABLE:
+#         import torch_npu  # noqa: F401
+#         num_npus = torch.npu.device_count()
+#         torch.npu.set_device(rank % num_npus)
+#         dist.init_process_group(
+#             backend='hccl',
+#             rank=rank,
+#             world_size=int(os.environ['WORLD_SIZE']),
+#             **kwargs)
+#     else:
+#         num_gpus = torch.cuda.device_count()
+#         torch.cuda.set_device(rank % num_gpus)
+#         dist.init_process_group(backend=backend, **kwargs)
 
 
-def _init_dist_mpi(backend, **kwargs):
-    # TODO: use local_rank instead of rank % num_gpus
-    rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
-    num_gpus = torch.cuda.device_count()
-    torch.cuda.set_device(rank % num_gpus)
+def _init_dist_mpi(backend: str, **kwargs) -> None:
+    local_rank = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+    torch.cuda.set_device(local_rank)
+    if 'MASTER_PORT' not in os.environ:
+        # 29500 is torch.distributed default port
+        os.environ['MASTER_PORT'] = '29500'
+    if 'MASTER_ADDR' not in os.environ:
+        raise KeyError('The environment variable MASTER_ADDR is not set')
+    os.environ['WORLD_SIZE'] = os.environ['OMPI_COMM_WORLD_SIZE']
+    os.environ['RANK'] = os.environ['OMPI_COMM_WORLD_RANK']
     dist.init_process_group(backend=backend, **kwargs)
 
 
@@ -88,13 +114,10 @@ def _init_dist_slurm(backend: str, port: Optional[int] = None) -> None:
     else:
         # if torch.distributed default port(29500) is available
         # then use it, else find a free port
-        # if _is_free_port(29500):
-        #     print("using default port 29500")
-        #     os.environ['MASTER_PORT'] = '29500'
-        # else:
-        #     print("using free port")
-        #     # os.environ['MASTER_PORT'] = str(_find_free_port())
-        os.environ['MASTER_PORT'] = '295000'
+        if _is_free_port(29500):
+            os.environ['MASTER_PORT'] = '29500'
+        else:
+            os.environ['MASTER_PORT'] = str(_find_free_port())
     # use MASTER_ADDR in the environment variable if it already exists
     if 'MASTER_ADDR' not in os.environ:
         os.environ['MASTER_ADDR'] = addr
@@ -106,15 +129,38 @@ def _init_dist_slurm(backend: str, port: Optional[int] = None) -> None:
     print("after init process group")
 
 
-def get_dist_info():
-    if TORCH_VERSION < '1.0':
-        initialized = dist._initialized
-    else:
-        if dist.is_available():
-            initialized = dist.is_initialized()
-        else:
-            initialized = False
-    if initialized:
+
+def get_ifname():
+    return ifcfg.default_interface()["device"]
+
+
+def init_dist_slurm(backend="gloo", **kwargs):
+    if "GLOO_SOCKET_IFNAME" not in os.environ:
+        os.environ["GLOO_SOCKET_IFNAME"] = get_ifname()
+
+    if "NCCL_SOCKET_IFNAME" not in os.environ:
+        os.environ["NCCL_SOCKET_IFNAME"] = get_ifname()
+
+    master_port = int(os.environ.get("MASTER_PORT", 8738))
+    master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("SLURM_LOCALID", 0)))
+    world_rank = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0)))
+    world_size = int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", 1)))
+
+    print("BEFORE TCP STORE ERIK", master_addr, master_port, world_size, world_rank)
+    tcp_store = dist.TCPStore(master_addr, master_port, world_size, world_rank == 0)
+    print("AFTER TCP STORE ERIK", master_addr, master_port, world_size, world_rank)
+    dist.init_process_group(
+        backend, store=tcp_store, rank=world_rank, world_size=world_size
+    )
+    print("AFTER INIT ERIK")
+
+
+    return local_rank, tcp_store
+
+
+def get_dist_info() -> Tuple[int, int]:
+    if dist.is_available() and dist.is_initialized():
         rank = dist.get_rank()
         world_size = dist.get_world_size()
     else:
@@ -123,7 +169,7 @@ def get_dist_info():
     return rank, world_size
 
 
-def master_only(func):
+def master_only(func: Callable) -> Callable:
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -134,12 +180,14 @@ def master_only(func):
     return wrapper
 
 
-def allreduce_params(params, coalesce=True, bucket_size_mb=-1):
+def allreduce_params(params: List[torch.nn.Parameter],
+                     coalesce: bool = True,
+                     bucket_size_mb: int = -1) -> None:
     """Allreduce parameters.
 
     Args:
-        params (list[torch.Parameters]): List of parameters or buffers of a
-            model.
+        params (list[torch.nn.Parameter]): List of parameters or buffers
+            of a model.
         coalesce (bool, optional): Whether allreduce parameters as a whole.
             Defaults to True.
         bucket_size_mb (int, optional): Size of bucket, the unit is MB.
@@ -156,11 +204,13 @@ def allreduce_params(params, coalesce=True, bucket_size_mb=-1):
             dist.all_reduce(tensor.div_(world_size))
 
 
-def allreduce_grads(params, coalesce=True, bucket_size_mb=-1):
+def allreduce_grads(params: List[torch.nn.Parameter],
+                    coalesce: bool = True,
+                    bucket_size_mb: int = -1) -> None:
     """Allreduce gradients.
 
     Args:
-        params (list[torch.Parameters]): List of parameters of a model
+        params (list[torch.nn.Parameter]): List of parameters of a model.
         coalesce (bool, optional): Whether allreduce parameters as a whole.
             Defaults to True.
         bucket_size_mb (int, optional): Size of bucket, the unit is MB.
@@ -180,7 +230,9 @@ def allreduce_grads(params, coalesce=True, bucket_size_mb=-1):
             dist.all_reduce(tensor.div_(world_size))
 
 
-def _allreduce_coalesced(tensors, world_size, bucket_size_mb=-1):
+def _allreduce_coalesced(tensors: torch.Tensor,
+                         world_size: int,
+                         bucket_size_mb: int = -1) -> None:
     if bucket_size_mb > 0:
         bucket_size_bytes = bucket_size_mb * 1024 * 1024
         buckets = _take_tensors(tensors, bucket_size_bytes)
