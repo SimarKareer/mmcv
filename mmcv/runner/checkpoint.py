@@ -92,6 +92,20 @@ def load_state_dict(module, state_dict, strict=False, logger=None):
     if missing_keys:
         err_msg.append(
             f'missing keys in source state_dict: {", ".join(missing_keys)}\n')
+    
+    def summarize_keys(keys, split):
+        # added to see what's wrong with checkpoint
+        prefixes = set()
+        for key in keys:
+            if split == 2:
+                prefixes.add(f"{key.split('.')[0]}.{key.split('.')[1]}")
+            else:
+                prefixes.add(key.split('.')[0])
+        print("Mismatch Prefixes: ", prefixes)
+    
+    print("-"*500)
+    summarize_keys(unexpected_keys, split=1)
+    summarize_keys(missing_keys, split=2)
 
     rank, _ = get_dist_info()
     if len(err_msg) > 0 and rank == 0:
