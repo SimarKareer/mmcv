@@ -101,9 +101,23 @@ def _init_dist_slurm(backend: str, port: Optional[int] = None) -> None:
     os.environ['WORLD_SIZE'] = str(ntasks)
     os.environ['LOCAL_RANK'] = str(proc_id % num_gpus)
     os.environ['RANK'] = str(proc_id)
-    print("before init process group")
-    dist.init_process_group(backend=backend)
-    print("after init process group")
+
+    # print("before init process group", os.environ['MASTER_PORT'], os.environ['MASTER_ADDR'])
+    # dist.init_process_group(backend=backend)
+    # print("after init process group")
+    master_port = int(os.environ.get("MASTER_PORT", 8738))
+    master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("SLURM_LOCALID", 0)))
+    world_rank = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0)))
+    world_size = int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", 1)))
+    # breakpoint()
+    print("BEFORE TCP STORE ERIK", master_addr, master_port, world_size, world_rank)
+
+    tcp_store = dist.TCPStore(master_addr, master_port, world_size, world_rank == 0)
+    print("AFTER TCP STORE ERIK", master_addr, master_port, world_size, world_rank)
+    dist.init_process_group(
+        backend, store=tcp_store, rank=world_rank, world_size=world_size
+    )
 
 
 def get_dist_info():

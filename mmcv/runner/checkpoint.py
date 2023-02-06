@@ -26,6 +26,16 @@ ENV_MMCV_HOME = 'MMCV_HOME'
 ENV_XDG_CACHE_HOME = 'XDG_CACHE_HOME'
 DEFAULT_CACHE_DIR = '~/.cache'
 
+def summarize_keys(keys, split):
+    # added to see what's wrong with checkpoint
+    prefixes = set()
+    for key in keys:
+        if split == 2:
+            prefixes.add(f"{key.split('.')[0]}.{key.split('.')[1]}")
+        else:
+            prefixes.add(key.split('.')[0])
+    # print("Prefixes: ", prefixes)
+    return prefixes
 
 def _get_mmcv_home():
     mmcv_home = os.path.expanduser(
@@ -93,19 +103,10 @@ def load_state_dict(module, state_dict, strict=False, logger=None):
         err_msg.append(
             f'missing keys in source state_dict: {", ".join(missing_keys)}\n')
     
-    def summarize_keys(keys, split):
-        # added to see what's wrong with checkpoint
-        prefixes = set()
-        for key in keys:
-            if split == 2:
-                prefixes.add(f"{key.split('.')[0]}.{key.split('.')[1]}")
-            else:
-                prefixes.add(key.split('.')[0])
-        print("Mismatch Prefixes: ", prefixes)
     
     print("-"*500)
-    summarize_keys(unexpected_keys, split=1)
-    summarize_keys(missing_keys, split=2)
+    print("Unexpected keys:", summarize_keys(unexpected_keys, split=1))
+    print("Missing keys:", summarize_keys(missing_keys, split=2))
 
     rank, _ = get_dist_info()
     if len(err_msg) > 0 and rank == 0:
