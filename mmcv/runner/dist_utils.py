@@ -13,6 +13,7 @@ from torch._utils import (_flatten_dense_tensors, _take_tensors,
 from typing import Callable, List, Optional, Tuple
 
 from mmcv.utils import TORCH_VERSION
+import ifcfg
 
 
 def _find_free_port() -> str:
@@ -94,7 +95,7 @@ def _init_dist_slurm(backend: str, port: Optional[int] = None) -> None:
         # else:
         #     print("using free port")
         #     # os.environ['MASTER_PORT'] = str(_find_free_port())
-        os.environ['MASTER_PORT'] = '295000'
+        os.environ['MASTER_PORT'] = '49200'
     # use MASTER_ADDR in the environment variable if it already exists
     if 'MASTER_ADDR' not in os.environ:
         os.environ['MASTER_ADDR'] = addr
@@ -110,8 +111,13 @@ def _init_dist_slurm(backend: str, port: Optional[int] = None) -> None:
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("SLURM_LOCALID", 0)))
     world_rank = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0)))
     world_size = int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", 1)))
-    # breakpoint()
     print("BEFORE TCP STORE ERIK", master_addr, master_port, world_size, world_rank)
+    # os.environ["NCCL_SOCKET_IFNAME"] = ifcfg.default_interface()["device"]
+    # os.environ["GLOO_SOCKET_IFNAME"] = ifcfg.default_interface()["device"]
+    # dist_url = f'tcp://{master_addr}:{65000}'
+    # dist.init_process_group(backend='nccl', init_method=dist_url, world_size=world_size, rank=world_rank)
+
+    # dist.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=world_rank)
 
     tcp_store = dist.TCPStore(master_addr, master_port, world_size, world_rank == 0)
     print("AFTER TCP STORE ERIK", master_addr, master_port, world_size, world_rank)

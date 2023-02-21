@@ -16,6 +16,17 @@ from .hooks import IterTimerHook
 from .utils import get_host_info
 
 
+from mmseg.utils.interruptible_utils import (
+    EXIT,
+    REQUEUE,
+    requeue,
+    get_requeue_state,
+    init_handlers,
+    save_state,
+    save_and_requeue,
+)
+
+
 class IterLoader:
 
     def __init__(self, dataloader):
@@ -114,9 +125,18 @@ class IterBasedRunner(BaseRunner):
 
         iter_loaders = [IterLoader(x) for x in data_loaders]
 
-        self.call_hook('before_epoch')
-
+        self.call_hook('before_epoch')       
+        print("INIT RQ HANDLERS")
+        init_handlers()         
         while self.iter < self._max_iters:
+            if REQUEUE.is_set() or EXIT.is_set():
+                print("GOT REQUEUE OR EXIT")
+                print("saving checkpoint")
+                self.save_checkpoint(osp.join(self.work_dir))
+                if REQUEUE.is_set():
+                    requeue()
+                print("EXITING JOB")
+                return
             for i, flow in enumerate(workflow):
                 self._inner_iter = 0
                 mode, iters = flow
