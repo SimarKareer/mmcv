@@ -131,8 +131,14 @@ class IterBasedRunner(BaseRunner):
         while self.iter < self._max_iters:
             if REQUEUE.is_set() or EXIT.is_set():
                 print("GOT REQUEUE OR EXIT")
-                print("saving checkpoint")
-                self.save_checkpoint(osp.join(self.work_dir))
+                ckpt_hook = None
+                for hook in self.hooks:
+                    if isinstance(hook, mmcv.runner.hooks.checkpoint.CheckpointHook):
+                        ckpt_hook = hook
+                        break
+                ckpt_hook._save_checkpoint(self)
+                print("Saved checkpoint")
+                
                 if REQUEUE.is_set():
                     requeue()
                 print("EXITING JOB")

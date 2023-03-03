@@ -70,6 +70,7 @@ class CheckpointHook(Hook):
 
     @master_only
     def _save_checkpoint(self, runner):
+        print("CALL TO SAVE CKPT")
         """Save the current checkpoint and delete unwanted checkpoint."""
         runner.save_checkpoint(
             self.out_dir, save_optimizer=self.save_optimizer, **self.args)
