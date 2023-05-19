@@ -30,10 +30,17 @@ def summarize_keys(keys, split):
     # added to see what's wrong with checkpoint
     prefixes = set()
     for key in keys:
-        if split == 2:
-            prefixes.add(f"{key.split('.')[0]}.{key.split('.')[1]}")
-        else:
-            prefixes.add(key.split('.')[0])
+        to_add = ""
+        for i in range(min(split, len(key.split(".")))):
+            if i == 0:
+                to_add += f"{key.split('.')[i]}"
+            else:
+                to_add += f".{key.split('.')[i]}"
+        prefixes.add(to_add)
+        # if split == 2:
+        #     prefixes.add(f"{key.split('.')[0]}.{key.split('.')[1]}")
+        # else:
+        #     prefixes.add(key.split('.')[0])
     # print("Prefixes: ", prefixes)
     return prefixes
 
@@ -533,6 +540,8 @@ def load_checkpoint(model,
     # get state_dict from checkpoint
     if 'state_dict' in checkpoint:
         state_dict = checkpoint['state_dict']
+    elif "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
     else:
         state_dict = checkpoint
     # strip prefix of state_dict
